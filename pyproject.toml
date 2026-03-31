@@ -1,0 +1,25 @@
+[project]
+name = "func-hash"
+version = "0.1.0"
+description = "Stable, logic-aware hashing for persistent caching of higher-order functions."
+readme = "README.md"
+authors = [
+    { name = "Philippe", email = "philippe.sa.costa@gmail.com" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.9.18,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
