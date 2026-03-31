@@ -3,6 +3,7 @@ name = "func-hash"
 version = "0.1.0"
 description = "Stable, logic-aware hashing for persistent caching of higher-order functions."
 readme = "README.md"
+license = { text = "MIT" } 
 authors = [
     { name = "Philippe", email = "philippe.sa.costa@gmail.com" }
 ]
