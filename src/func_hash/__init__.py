@@ -1,47 +1,77 @@
+import ast
+import functools
+import hashlib
 import inspect
-import re
-from typing import Any, Dict, Tuple
+import json
+import textwrap
+from typing import Any
 
 
-def _hash_arg(arg: Any) -> Any:
-    """Recursively converts an argument into a hashable primitive."""
+def _normalize(arg: Any) -> Any:
+    """Recursively converts an argument into a JSON-serializable structure."""
+    # Unwrap partial before any other callable handling
+    if isinstance(arg, functools.partial):
+        return {
+            "__partial__": {
+                "func": _normalize(arg.func),
+                "args": [_normalize(a) for a in arg.args],
+                "kwargs": {k: _normalize(v) for k, v in sorted(arg.keywords.items())},
+            }
+        }
+
     if callable(arg):
         try:
-            source = inspect.getsource(arg).strip()
-
-            # Use regex to find the start of the logic (lambda or def)
-            # This removes variable assignments like 'l1 = '
-            match = re.search(r"((lambda|def)\s.*)", source)
-            if match:
-                return match.group(1)
-            return source
+            source = inspect.getsource(arg)
+            tree = ast.parse(textwrap.dedent(source))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Lambda):
+                    return {"__callable__": ast.unparse(node)}
+                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                    return {
+                        "__callable__": {
+                            "args": ast.unparse(node.args),
+                            "body": [ast.unparse(stmt) for stmt in node.body],
+                        }
+                    }
         except (OSError, TypeError):
-            if hasattr(arg, "__code__"):
-                # Bytecode is a stable bytes object
-                return arg.__code__.co_code
-            return str(arg)
+            pass
+        # Built-ins and C extensions: qualname is the best persistent identifier
+        return {"__callable__": getattr(arg, "__qualname__", repr(arg))}
 
-    # Handle basic collections to ensure they are also hashable
-    if isinstance(arg, list):
-        return tuple(_hash_arg(i) for i in arg)
     if isinstance(arg, dict):
-        return tuple((k, _hash_arg(v)) for k, v in sorted(arg.items()))
+        return {"__dict__": [[k, _normalize(v)] for k, v in sorted(arg.items())]}
 
-    return arg
+    if isinstance(arg, (list, tuple)):
+        return {"__" + type(arg).__name__ + "__": [_normalize(i) for i in arg]}
+
+    if isinstance(arg, (set, frozenset)):
+        return {"__" + type(arg).__name__ + "__": sorted(_normalize(i) for i in arg)}
+
+    # Primitives: int, float, str, bool, None — JSON-safe as-is
+    if isinstance(arg, int | float | str | bool | type(None)):
+        return arg
+
+    # Fallback: repr with type tag to avoid cross-type collisions
+    return {"__unknown__": type(arg).__qualname__, "repr": repr(arg)}
 
 
-def func_hash(args: Tuple[Any, ...], kwds: Dict[str, Any]) -> Tuple[Any, ...]:
-    """Generates a stable, nested tuple for persistent caching.
+def func_hash(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str:
+    """Generates a stable sha256 hex digest for persistent caching with cachier.
+
+    Usage with cachier:
+        @cachier(hash_func=func_hash)
+        def my_func(...): ...
 
     Args:
-        args: Positional arguments.
-        kwds: Keyword arguments.
+        args:   Positional arguments passed to the cached function.
+        kwargs: Keyword arguments passed to the cached function.
 
     Returns:
-        A tuple containing hashable representations of all logic and data.
+        A hex digest string suitable as a persistent cache key.
     """
-    pos_part = tuple(_hash_arg(a) for a in args)
-    # Sorting keywords is essential for cache stability
-    kw_part = tuple((k, _hash_arg(v)) for k, v in sorted(kwds.items()))
-
-    return pos_part + kw_part
+    normalized = {
+        "args": [_normalize(a) for a in args],
+        "kwargs": {k: _normalize(v) for k, v in sorted(kwargs.items())},
+    }
+    payload = json.dumps(normalized, sort_keys=True, ensure_ascii=True)
+    return hashlib.sha256(payload.encode()).hexdigest()
